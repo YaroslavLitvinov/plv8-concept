@@ -1,3 +1,5 @@
+#!/bin/bash
+
 cat cmpl.zip | base64 -w 0 | psql -c "
 CREATE SCHEMA IF NOT EXISTS concept;
 SET search_path TO concept;
