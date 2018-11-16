@@ -20,11 +20,9 @@ CREATE TABLE IF NOT EXISTS bodies (id uuid, num int, last boolean, "offset" int,
 
 -- testing
 
-DROP FUNCTION IF EXISTS req_handler() CASCADE;
-CREATE FUNCTION req_handler() RETURNS TRIGGER AS
+/*This function to be used from another js functions*/
+CREATE FUNCTION user_chunked_body(req bytea, resp bytea) RETURNS INT AS
 $$
-  /* duplicated source code */
-  function user_body_function(req, resp) {
     plv8.elog(LOG, 'req', JSON.stringify(req));
     plv8.elog(LOG, 'resp', JSON.stringify(resp));
   
@@ -46,10 +44,15 @@ $$
         resp.body.last = true;
       }
     }
-  }
+$$
+LANGUAGE plv8;
 
+DROP FUNCTION IF EXISTS req_handler() CASCADE;
+CREATE FUNCTION req_handler() RETURNS TRIGGER AS
+$$
   function user_resp_function(req, resp) {
-    user_body_function(req, resp);
+    var user_chunked_body = plv8.find_function('user_chunked_body');
+    user_chunked_body(req, resp);
   }
   
   var req = {
@@ -94,36 +97,7 @@ LANGUAGE "plv8";
 
 DROP FUNCTION IF EXISTS resp_body_handler() CASCADE;
 CREATE FUNCTION resp_body_handler() RETURNS TRIGGER AS
-$$
-  /* duplicated source code */
-  function user_body_function(req, resp) {
-    plv8.elog(LOG, 'req', JSON.stringify(req));
-    plv8.elog(LOG, 'resp', JSON.stringify(resp));
-
-    const max_data_size = 3 /*64 * 1024 - 1;*/
-    var datas = plv8.execute(
-        'SELECT substring(image from $2 for $3) as data, octet_length(image) as size FROM user_files WHERE name = $1',
-        [req.uri, resp.body.offset, max_data_size]
-    );
-    
-    if (datas.length) {
-      data = datas[0]
-
-      if (data.size > resp.body.offset + data.data.length) {
-        resp.body.last = false;
-        resp.body.data = data.data;
-        resp.chunked = true;
-      }
-      else {
-        resp.body.last = true;
-      }
-    }
-    else {
-      plv8.elog(WARNING, 'No data for resp_body_handler');
-      resp.body.last = true;
-    }
-  }
-  
+$$  
   var req = plv8.execute('SELECT * FROM requests WHERE id = $1', [NEW.id]);
   var resp = plv8.execute('SELECT * FROM responses WHERE id = $1', [NEW.id]);
 
@@ -135,7 +109,8 @@ $$
 
   plv8.elog(LOG, 'NEW', JSON.stringify(NEW));
 
-  user_body_function(req, resp);
+  var user_chunked_body = plv8.find_function('user_chunked_body');
+  user_chunked_body(req, resp);
   var num = NEW.num + 1;
 
   plv8.execute('INSERT INTO bodies(id, num, last, "offset", length, data) \
